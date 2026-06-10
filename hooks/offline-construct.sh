@@ -34,8 +34,10 @@ NBD=/dev/nbd0
 M_ISO=/mnt/anyvm_iso
 M_TGT=/mnt/anyvm_tgt
 M_SYS=/mnt/anyvm_sys
+M_EFS=/mnt/anyvm_efs
 
 _cleanup() {
+  sudo umount "$M_EFS" 2>/dev/null || true
   sudo umount "$M_SYS" 2>/dev/null || true
   sudo umount "$M_TGT" 2>/dev/null || true
   sudo umount "$M_ISO" 2>/dev/null || true
@@ -83,9 +85,10 @@ ssh-keygen -t rsa -f "$_work/guest_id_rsa" -q -N ""        # the guest's own ~/.
 ###############################################################################
 # 3. mount the ISO (read-only)
 ###############################################################################
-sudo mkdir -p "$M_ISO" "$M_TGT" "$M_SYS"
+sudo mkdir -p "$M_ISO" "$M_TGT" "$M_SYS" "$M_EFS"
 mountpoint -q "$M_ISO" || sudo mount -o loop,ro "$_iso" "$M_ISO"
-[ -e "$M_ISO/system.sfs" ] || [ -e "$M_ISO/system.img" ] || { echo "ERROR: ISO has no system.sfs/system.img"; exit 1; }
+[ -e "$M_ISO/system.sfs" ] || [ -e "$M_ISO/system.efs" ] || [ -e "$M_ISO/system.img" ] || \
+  { echo "ERROR: ISO has no system.sfs/system.efs/system.img"; exit 1; }
 
 ###############################################################################
 # 4. partition + format the target qcow2 (one bootable ext4 primary)
@@ -112,14 +115,38 @@ sudo mkdir -p "$M_TGT/$ASRC/data/dropbear/.ssh"
 sudo cp "$M_ISO/kernel"     "$M_TGT/$ASRC/kernel"
 sudo cp "$M_ISO/initrd.img" "$M_TGT/$ASRC/initrd.img"
 
-# Materialize $ASRC/system.img from whatever the ISO ships. BlissOS 14/15/16
-# FOSS wrap an ext4 system.img inside a zstd SQUASHFS system.sfs; other builds
-# may use an EROFS system.sfs or ship system.img directly. Use userspace tools,
-# not mount: host kernels often lack zstd-squashfs (WSL) and this also covers
-# erofs without kernel support.
+# Materialize $ASRC/system.img from whatever wrapper the ISO ships:
+#   * BlissOS 14/15 FOSS: system.sfs  = zstd SQUASHFS containing system.img
+#   * BlissOS 16   FOSS: system.efs  = EROFS containing system.img
+#   * some builds ship a plain system.img directly
+# The initrd's init probes system.sfs, then system.efs, then falls back to
+# loop-mounting a bare $SRC/system.img -- so placing the inner ext4 system.img
+# alone on the target disk boots identically for every variant.
+# Use userspace unsquashfs for squashfs (host kernels often lack zstd-squashfs,
+# e.g. WSL). For erofs prefer a kernel mount (no double copy; Ubuntu runners
+# ship the erofs module) and fall back to userspace fsck.erofs --extract.
+_extract_erofs_systemimg() {
+  _efs="$1"
+  sudo modprobe erofs 2>/dev/null || true
+  if sudo mount -o loop,ro -t erofs "$_efs" "$M_EFS" 2>/dev/null; then
+    echo "erofs kernel mount OK; copying inner system.img..."
+    sudo cp "$M_EFS/system.img" "$M_TGT/$ASRC/system.img"
+    sudo umount "$M_EFS"
+  else
+    echo "no kernel erofs support; extracting with fsck.erofs (userspace)..."
+    sudo mkdir -p "$M_TGT/$ASRC/efsx"
+    sudo fsck.erofs "--extract=$M_TGT/$ASRC/efsx" "$_efs"
+    sudo mv "$M_TGT/$ASRC/efsx/system.img" "$M_TGT/$ASRC/system.img"
+    sudo rm -rf "$M_TGT/$ASRC/efsx" 2>/dev/null || true
+  fi
+}
+
 if [ -e "$M_ISO/system.img" ]; then
   echo "ISO ships a plain system.img; copying..."
   sudo cp "$M_ISO/system.img" "$M_TGT/$ASRC/system.img"
+elif [ -e "$M_ISO/system.efs" ]; then
+  echo "system.efs type: $(file -b "$M_ISO/system.efs" 2>/dev/null || true)"
+  _extract_erofs_systemimg "$M_ISO/system.efs"
 else
   _sfs_type="$(file -b "$M_ISO/system.sfs" 2>/dev/null || true)"
   echo "system.sfs type: $_sfs_type"
@@ -129,11 +156,7 @@ else
       sudo unsquashfs -f -d "$M_TGT/$ASRC" "$M_ISO/system.sfs" system.img
       ;;
     *EROFS*|*erofs*)
-      echo "extracting system.img from system.sfs (erofs)..."
-      _ero="$(mktemp -d)"
-      sudo fsck.erofs "--extract=$_ero" "$M_ISO/system.sfs"
-      sudo mv "$_ero/system.img" "$M_TGT/$ASRC/system.img"
-      sudo rm -rf "$_ero" 2>/dev/null || true
+      _extract_erofs_systemimg "$M_ISO/system.sfs"
       ;;
     *)
       echo "ERROR: unrecognized system.sfs format: $_sfs_type"; exit 1
