@@ -72,12 +72,18 @@ _work="$(mktemp -d)"
   ./configure --disable-zlib --disable-pam CC=musl-gcc \
               CFLAGS="-Os -no-pie" LDFLAGS="-static -no-pie" >/dev/null
   make -j"$(nproc)" STATIC=1 LDFLAGS="-static -no-pie" \
-       PROGRAMS="dropbear dropbearkey" >/dev/null
+       PROGRAMS="dropbear dropbearkey scp" >/dev/null
 )
 _db="$_work/dropbear-${DROPBEAR_VER}/dropbear"
 _dbkey="$_work/dropbear-${DROPBEAR_VER}/dropbearkey"
+_scp="$_work/dropbear-${DROPBEAR_VER}/scp"
 file "$_db"
 file "$_db" | grep -q "statically linked" || { echo "ERROR: dropbear is not static"; exit 1; }
+# scp is baked into the guest as the RECEIVER side of the legacy scp protocol
+# (the host runs `scp -O`, which executes `scp -t <dir>` on the guest via the
+# login shell). Android/toybox ships no scp and dropbear has no sftp server,
+# so without this binary no host->guest file copy works at all.
+file "$_scp" | grep -q "statically linked" || { echo "ERROR: scp is not static"; exit 1; }
 "$_dbkey" -t rsa     -f "$_work/dropbear_rsa_host_key"     >/dev/null 2>&1
 "$_dbkey" -t ed25519 -f "$_work/dropbear_ed25519_host_key" >/dev/null 2>&1
 ssh-keygen -t rsa -f "$_work/guest_id_rsa" -q -N ""        # the guest's own ~/.ssh key
@@ -190,6 +196,7 @@ else R="$(dirname "$(sudo find "$M_SYS" -maxdepth 3 -type d -name bin | head -1)
 echo "system root inside image: $R"
 
 sudo install -m 0755 "$_db" "$R/bin/dropbear"
+sudo install -m 0755 "$_scp" "$R/bin/scp"
 
 # /etc is a symlink to /system/etc on Android-x86; musl dropbear reads /etc/passwd.
 # Root HOME is on the WRITABLE /data (system.img is read-only at runtime, but
