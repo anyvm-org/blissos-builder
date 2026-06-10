@@ -1,0 +1,13 @@
+
+
+mkdir -p ~/.ssh
+chmod 700 ~/.ssh
+
+# Do NOT run ssh-keygen here: Android has no ssh-keygen (or openssl). The
+# guest keypair (~/.ssh/id_rsa[.pub]) is pre-baked into /data/dropbear/.ssh by
+# hooks/offline-construct.sh; build.py later exports ~/.ssh/id_rsa.pub as
+# <output>-id_rsa.pub.
+
+# No sshd_config tweaks either: dropbear takes its configuration from the
+# command line in /system/etc/init/dropbear.rc, and /etc on Android is a
+# read-only symlink into /system.
