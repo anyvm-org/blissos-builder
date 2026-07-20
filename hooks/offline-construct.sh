@@ -25,8 +25,11 @@ set -e
 
 osname="${VM_OS_NAME:-blissos}"
 _dir="$(pwd)"
-_qcow="$_dir/$osname.qcow2"
-_iso="$_dir/$osname.iso"
+# build.py routes the working image + iso under build/ (exported as
+# VM_WORKDIR); keep them absolute. Falls back to the repo root when unset.
+_wd="${VM_WORKDIR:+$VM_WORKDIR/}"
+_qcow="$_dir/${_wd}$osname.qcow2"
+_iso="$_dir/${_wd}$osname.iso"
 ASRC="blissos-${VM_RELEASE}"        # install dir / kdir; name is free but must be self-consistent
 DROPBEAR_VER="2022.83"
 
