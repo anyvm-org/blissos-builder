@@ -5,7 +5,7 @@
       "tag": "14",
       "release": "14",
       "arch": "x86_64",
-      "sync": "scp",
+      "sync": "scp,tar",
       "shutdown": "reboot -p",
       "desktop": false,
       "build": true
@@ -14,7 +14,7 @@
       "tag": "15",
       "release": "15",
       "arch": "x86_64",
-      "sync": "scp",
+      "sync": "scp,tar",
       "shutdown": "reboot -p",
       "desktop": false,
       "build": true
@@ -23,7 +23,7 @@
       "tag": "16",
       "release": "16",
       "arch": "x86_64",
-      "sync": "scp",
+      "sync": "scp,tar",
       "shutdown": "reboot -p",
       "desktop": false,
       "build": true
