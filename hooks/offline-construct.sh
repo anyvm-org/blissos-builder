@@ -32,6 +32,13 @@ _qcow="$_dir/${_wd}$osname.qcow2"
 _iso="$_dir/${_wd}$osname.iso"
 ASRC="blissos-${VM_RELEASE}"        # install dir / kdir; name is free but must be self-consistent
 DROPBEAR_VER="2022.83"
+# sha256 of dropbear-$DROPBEAR_VER.tar.bz2. Bump it in the same edit as the
+# version -- the download below refuses to build anything that does not match.
+# Source: Debian's dropbear_2022.83-1+deb12u3.dsc records
+#   bc5a121f...443b  2322904  dropbear_2022.83.orig.tar.bz2
+# which is an independent record of the upstream tarball, taken long before
+# any of the mirrors below were trusted here.
+DROPBEAR_SHA256="bc5a121ffbc94b5171ad5ebe01be42746d50aa797c9549a4639894a16749443b"
 
 NBD=/dev/nbd0
 M_ISO=/mnt/anyvm_iso
@@ -69,8 +76,27 @@ echo "=== blissos: building static dropbear $DROPBEAR_VER (musl) ==="
 _work="$(mktemp -d)"
 (
   cd "$_work"
-  wget -q "https://matt.ucc.asn.au/dropbear/releases/dropbear-${DROPBEAR_VER}.tar.bz2"
-  tar xjf "dropbear-${DROPBEAR_VER}.tar.bz2"
+  # Upstream is one person's server behind Cloudflare and it does go down: on
+  # 2026-08-13 every path on it answered HTTP 525, wget exited 8, and set -e
+  # took all three blissos builds down with it. Try upstream first, fall back
+  # to the mirror, and gate BOTH on the pinned checksum -- this tarball becomes
+  # the sshd baked into every image, so a mirror is only acceptable hashed.
+  _tb="dropbear-${DROPBEAR_VER}.tar.bz2"
+  for _u in "https://matt.ucc.asn.au/dropbear/releases/$_tb" \
+            "https://dropbear.nl/mirror/releases/$_tb"; do
+    echo "blissos: fetching $_u"
+    # -nv, not -q: the silent wget is why the last breakage showed an
+    # unexplained rc=8 with no HTTP status anywhere in the CI log. -nv still
+    # prints the error line, without the 50 lines of progress dots -q was
+    # there to suppress.
+    wget -nv --tries=3 --timeout=30 -O "$_tb" "$_u" && break
+    echo "blissos: fetch failed (rc=$?), trying the next source"
+    rm -f "$_tb"
+  done
+  [ -s "$_tb" ] || { echo "ERROR: could not download $_tb from any source"; exit 1; }
+  echo "$DROPBEAR_SHA256  $_tb" | sha256sum -c - \
+    || { echo "ERROR: $_tb does not match DROPBEAR_SHA256"; exit 1; }
+  tar xjf "$_tb"
   cd "dropbear-${DROPBEAR_VER}"
   ./configure --disable-zlib --disable-pam CC=musl-gcc \
               CFLAGS="-Os -no-pie" LDFLAGS="-static -no-pie" >/dev/null
